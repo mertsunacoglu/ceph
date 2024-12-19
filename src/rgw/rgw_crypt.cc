@@ -17,6 +17,11 @@
 #include "crypto/crypto_accel.h"
 #include "crypto/crypto_plugin.h"
 #include "rgw/rgw_kms.h"
+<<<<<<< HEAD
+=======
+#include "rgw_range_projection.h"
+#include "rgw/rgw_process_env.h"
+>>>>>>> b6186fc596d (rgw: SSE-KMS Secrets Cache)
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/error/error.h"
@@ -1176,7 +1181,7 @@ int rgw_s3_prepare_encrypt(req_state* s, optional_yield y,
         set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
         set_attr(attrs, RGW_ATTR_CRYPT_CONTEXT, cooked_context);
         std::string actual_key;
-        res = make_actual_key_from_kms(s, attrs, y, actual_key);
+        res = make_actual_key_from_kms(s, attrs, s->penv.kms_cache.get(), y, actual_key);
         if (res != 0) {
           ldpp_dout(s, 5) << "ERROR: failed to retrieve actual key from key_id: " << key_id << dendl;
           s->err.message = "Failed to retrieve the actual key, kms-keyid: " + std::string(key_id);
@@ -1407,7 +1412,8 @@ int rgw_s3_prepare_decrypt(req_state* s, optional_yield y,
     /* try to retrieve actual key */
     std::string key_id = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYID);
     std::string actual_key;
-    res = reconstitute_actual_key_from_kms(s, attrs, y, actual_key);
+
+    res = reconstitute_actual_key_from_kms(s, attrs, s->penv.kms_cache.get(), y, actual_key);
     if (res != 0) {
       ldpp_dout(s, 10) << "ERROR: failed to retrieve actual key from key_id: " << key_id << dendl;
       s->err.message = "Failed to retrieve the actual key, kms-keyid: " + key_id;
@@ -1425,8 +1431,75 @@ int rgw_s3_prepare_decrypt(req_state* s, optional_yield y,
     actual_key.replace(0, actual_key.length(), actual_key.length(), '\000');
     if (block_crypt) *block_crypt = std::move(aes);
 
-    crypt_http_responses["x-amz-server-side-encryption"] = "aws:kms";
-    crypt_http_responses["x-amz-server-side-encryption-aws-kms-key-id"] = key_id;
+    if (crypt_http_responses) {
+      crypt_http_responses->emplace("x-amz-server-side-encryption", "aws:kms");
+      crypt_http_responses->emplace("x-amz-server-side-encryption-aws-kms-key-id", key_id);
+    }
+
+    return 0;
+  }
+
+  if (stored_mode == "SSE-KMS-GCM") {
+    if (s->cct->_conf->rgw_crypt_require_ssl &&
+        !rgw_transport_is_secure(s->cct, *s->info.env)) {
+      ldpp_dout(s, 5) << "ERROR: Insecure request, rgw_crypt_require_ssl is set" << dendl;
+      return -ERR_INVALID_REQUEST;
+    }
+    /* try to retrieve actual key */
+    std::string key_id = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYID);
+    std::string actual_key;
+    res = reconstitute_actual_key_from_kms(s, attrs, s->penv.kms_cache.get(), y, actual_key);
+    if (res != 0) {
+      ldpp_dout(s, 10) << "ERROR: failed to retrieve actual key from key_id: " << key_id << dendl;
+      s->err.message = "Failed to retrieve the actual key, kms-keyid: " + key_id;
+      return res;
+    }
+    if (actual_key.size() != AES_256_KEYSIZE) {
+      ldpp_dout(s, 0) << "ERROR: key obtained from key_id:" <<
+          key_id << " is not 256 bit size" << dendl;
+      s->err.message = "KMS provided an invalid key for the given kms-keyid.";
+      return -EINVAL;
+    }
+
+    std::string stored_salt = get_gcm_salt(s, s, attrs, "SSE-KMS-GCM");
+    if (stored_salt.empty()) {
+      ::ceph::crypto::zeroize_for_security(actual_key.data(), actual_key.length());
+      return -EIO;
+    }
+
+    auto aes = AES_256_GCM_create(s, s->cct,
+                                   reinterpret_cast<const uint8_t*>(actual_key.c_str()),
+                                   AES_256_KEYSIZE,
+                                   reinterpret_cast<const uint8_t*>(stored_salt.c_str()),
+                                   stored_salt.size(),
+                                   part_number);
+    if (!aes) {
+      ldpp_dout(s, 5) << "ERROR: Failed to create AES-256-GCM instance for decryption" << dendl;
+      ::ceph::crypto::zeroize_for_security(actual_key.data(), actual_key.length());
+      return -EIO;
+    }
+    std::string bucket_id, object_name;
+    pick_gcm_identity(s, copy_source, src_identity, bucket_id, object_name);
+    auto* gcm = dynamic_cast<AES_256_GCM*>(aes.get());
+    if (!gcm || !gcm->derive_object_key(
+            reinterpret_cast<const uint8_t*>(actual_key.c_str()),
+            AES_256_KEYSIZE,
+            bucket_id,
+            object_name,
+            part_number,
+            "SSE-KMS-GCM")) {
+      ldpp_dout(s, 5) << "ERROR: SSE-KMS-GCM key derivation failed" << dendl;
+      ::ceph::crypto::zeroize_for_security(actual_key.data(), actual_key.length());
+      return -EIO;
+    }
+    ::ceph::crypto::zeroize_for_security(actual_key.data(), actual_key.length());
+    if (block_crypt) *block_crypt = std::move(aes);
+
+    if (crypt_http_responses) {
+      crypt_http_responses->emplace("x-amz-server-side-encryption", "aws:kms");
+      crypt_http_responses->emplace("x-amz-server-side-encryption-aws-kms-key-id", key_id);
+    }
+
     return 0;
   }
 
