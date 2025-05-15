@@ -23,6 +23,9 @@ The repository for el8 builds is hosted by CERN on `Linux@CERN <https://linuxsof
 The public part of the GPG key used to sign the
 packages is available at `RPM-GPG-KEY-Ceph-Community <https://linuxsoft.cern.ch/repos/RPM-GPG-KEY-Ceph-Community>`_ .
 
+Also note that Ceph now builds against OpenSSL 3.5.0, which may affect EL package users who are on distros that
+still reference an older version.
+
 Notable Changes
 ---------------
 
