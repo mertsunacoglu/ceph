@@ -584,7 +584,6 @@ static void dump_container_metadata(req_state *s,
     if (!s->bucket->get_placement_rule().name.empty()) {
       dump_header(s, "X-Storage-Policy", s->bucket->get_placement_rule().name);
     }
-    
     dump_header(s, "X-Storage-Class", s->bucket->get_placement_rule().get_storage_class());
 
     /* Dump user-defined metadata items and generic attrs. */
