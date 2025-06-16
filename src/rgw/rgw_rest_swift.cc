@@ -575,11 +575,6 @@ static void dump_container_metadata(req_state *s,
     std::string read_acl, write_acl;
     rgw::swift::format_container_acls(s->bucket_acl, read_acl, write_acl);
 
-    if (read_acl.size()) {
-      dump_header(s, "X-Container-Read", read_acl);
-    }
-    if (write_acl.size()) {
-      dump_header(s, "X-Container-Write", write_acl);
     }
     if (!s->bucket->get_placement_rule().name.empty()) {
       dump_header(s, "X-Storage-Policy", s->bucket->get_placement_rule().name);
