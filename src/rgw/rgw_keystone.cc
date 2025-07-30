@@ -95,6 +95,10 @@ static inline std::string read_secret(const std::string& file_path)
   return s;
 }
 
+bool keystone_admin_token_required() const {
+  return g_ceph_context->_conf->rgw_keystone_admin_token_required;
+}
+
 std::string CephCtxConfig::get_admin_token() const noexcept
 {
   auto& atv = g_ceph_context->_conf->rgw_keystone_admin_token_path;
@@ -135,6 +139,13 @@ int Service::get_admin_token(const DoutPrefixProvider *dpp,
   if (! admin_token.empty()) {
     token = std::string(admin_token.data(), admin_token.length());
     return 0;
+  }
+
+  // Check if admin token authentication is required/enabled
+   // Admin token is optional and not configured
+  if (!config.keystone_admin_token_required()) {
+    ldpp_dout(dpp, 20) << "admin token not required, skipping keystone authentication" << dendl;
+    return -ENOENT; // no entry error code
   }
 
   TokenEnvelope t;

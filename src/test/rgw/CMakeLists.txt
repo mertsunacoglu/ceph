@@ -232,7 +232,15 @@ add_executable(unittest_rgw_throttle test_rgw_throttle.cc)
 add_ceph_unittest(unittest_rgw_throttle)
 target_link_libraries(unittest_rgw_throttle ${rgw_libs} ${UNITTEST_LIBS})
 
+# unittest_rgw_keystone
+add_executable(unittest_rgw_keystone test_rgw_keystone.cc)
+add_ceph_unittest(unittest_rgw_keystone)
+target_include_directories(unittest_rgw_keystone
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+target_link_libraries(unittest_rgw_keystone ${rgw_libs} ${UNITTEST_LIBS})
+
 add_executable(unittest_rgw_iam_policy test_rgw_iam_policy.cc)
+
 add_ceph_unittest(unittest_rgw_iam_policy)
 target_link_libraries(unittest_rgw_iam_policy
   ${rgw_libs}
