@@ -1,5 +1,11 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include "rgw_keystone.h"
+#include "common/dout.h"
+#include "include/common_fwd.h"
+#include "rgw_common.h"
+
+using namespace rgw::keystone;
 
 class MockConfig {
 public:

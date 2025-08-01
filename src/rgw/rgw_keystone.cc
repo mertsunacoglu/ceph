@@ -95,10 +95,6 @@ static inline std::string read_secret(const std::string& file_path)
   return s;
 }
 
-bool keystone_admin_token_required() const {
-  return g_ceph_context->_conf->rgw_keystone_admin_token_required;
-}
-
 std::string CephCtxConfig::get_admin_token() const noexcept
 {
   auto& atv = g_ceph_context->_conf->rgw_keystone_admin_token_path;

@@ -799,6 +799,15 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_keystone_admin_token_required
+  type: bool
+  level: advanced
+  desc: Require Keystone admin token for certain operations.
+  fmt_desc: Whether the RGW should require an admin token for admin-level operations when integrating with Keystone. This is relevant when using Keystone for authentication, particularly with the OpenStack Identity API.
+  default: false
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_keystone_service_token_enabled
   type: bool
   level: advanced
