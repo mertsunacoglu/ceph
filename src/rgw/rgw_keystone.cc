@@ -137,6 +137,13 @@ int Service::get_admin_token(const DoutPrefixProvider *dpp,
     return 0;
   }
 
+  // Check if admin token authentication is required/enabled
+   // Admin token is optional and not configured
+  if (!config.keystone_admin_token_required()) {
+    ldpp_dout(dpp, 20) << "admin token not required, skipping keystone authentication" << dendl;
+    return -ENOENT; // no entry error code
+  }
+
   TokenEnvelope t;
 
   /* Try cache first before calling Keystone for a new admin token. */

@@ -60,6 +60,10 @@ public:
 
   std::string get_endpoint_url() const noexcept override;
 
+  bool keystone_admin_token_required() const {
+    return g_ceph_context->_conf->rgw_keystone_admin_token_required;
+  }
+
   std::string get_admin_token() const noexcept override;
 
   std::string_view get_admin_user() const noexcept override {

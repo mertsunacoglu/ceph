@@ -74,14 +74,21 @@ admin_token_retry:
   bool admin_token_cached = false;
   int ret = rgw::keystone::Service::get_admin_token(dpp, token_cache, config,
                                                     y, admin_token, admin_token_cached);
-  if (ret < 0) {
-    throw -EINVAL;
-  }
-
-  if (allow_expired) {
-    validate.append_header("X-Auth-Token", admin_token);
-  } else {
+  if (ret == -ENOENT) {
+    /* If the admin token is not set, we can skip the admin token validation. */
+    ldpp_dout(dpp, 20) << "no admin token configured, skipping admin token validation" << dendl;
+    // Use only the user token for validation
     validate.append_header("X-Auth-Token", token);
+  } else if (ret < 0) {
+    /* If we failed to get the admin token, we should throw an error. */
+    throw ret;
+  } else {
+    // Admin token retrieved successfully
+    if (allow_expired) {
+      validate.append_header("X-Auth-Token", admin_token);
+    } else {
+      validate.append_header("X-Auth-Token", token);
+    }
   }
 
   validate.set_send_length(0);
