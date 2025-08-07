@@ -2178,6 +2178,9 @@ class RGWDeleteMultiObj : public RGWOp {
    */
   void handle_individual_object(const RGWMultiDelObject& object, optional_yield y);
 
+  void handle_objects(const std::vector<RGWMultiDelObject>& objects,
+                      uint32_t max_aio, boost::asio::yield_context yield);
+
 protected:
   std::vector<delete_multi_obj_entry> ops_log_entries;
   bufferlist data;
@@ -2231,8 +2234,7 @@ extern int rgw_build_bucket_policies(const DoutPrefixProvider *dpp, rgw::sal::Dr
 				     req_state* s, optional_yield y);
 extern int rgw_build_object_policies(const DoutPrefixProvider *dpp, rgw::sal::Driver* driver,
 				     req_state *s, bool prefetch_data, optional_yield y);
-extern void rgw_build_iam_environment(rgw::sal::Driver* driver,
-				      req_state* s);
+extern void rgw_build_iam_environment(req_state* s);
 
 inline int get_system_versioning_params(req_state *s,
 					uint64_t *olh_epoch,
