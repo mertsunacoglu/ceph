@@ -499,6 +499,7 @@ EC2Engine::get_from_keystone(const DoutPrefixProvider* dpp, const std::string_vi
 auto EC2Engine::get_secret_from_keystone(const DoutPrefixProvider* dpp,
                                          const std::string& user_id,
                                          const std::string_view& access_key_id,
+                                         const req_state* s,
                                          optional_yield y) const
     -> std::pair<boost::optional<std::string>, int>
 {
@@ -518,16 +519,23 @@ auto EC2Engine::get_secret_from_keystone(const DoutPrefixProvider* dpp,
   keystone_url.append(std::string(access_key_id));
 
   /* get authentication token for Keystone. */
+  std::string token;
   std::string admin_token;
   bool admin_token_cached = false;
-  int ret = rgw::keystone::Service::get_admin_token(dpp, token_cache, config,
-                                                    y, admin_token, admin_token_cached);
-  if (ret < 0) {
-    ldpp_dout(dpp, 2) << "s3 keystone: cannot get token for keystone access"
-                  << dendl;
-    return make_pair(boost::none, ret);
-  }
+  int ret;
 
+  if (config.keystone_admin_token_required()) {
+    ret = rgw::keystone::Service::get_admin_token(dpp, token_cache, config,
+                                                      y, admin_token, admin_token_cached);
+    if (ret < 0) {
+      ldpp_dout(dpp, 2) << "s3 keystone: cannot get admin token for keystone access"
+                    << dendl;
+      return make_pair(boost::none, ret);
+    }
+    token = admin_token;
+  }else{
+      token = s->info.env->get("HTTP_X_AUTH_TOKEN");
+  }
   using RGWGetAccessSecret
     = rgw::keystone::Service::RGWKeystoneHTTPTransceiver;
 
@@ -536,8 +544,7 @@ auto EC2Engine::get_secret_from_keystone(const DoutPrefixProvider* dpp,
   RGWGetAccessSecret secret(cct, "GET", keystone_url, &token_body_bl);
 
   /* set required headers for keystone request */
-  secret.append_header("X-Auth-Token", admin_token);
-
+  secret.append_header("X-Auth-Token", token);
   /* check if we want to verify keystone's ssl certs */
   secret.set_verify_ssl(cct->_conf->rgw_keystone_verify_ssl);
 
@@ -590,7 +597,8 @@ auto EC2Engine::get_access_token(const DoutPrefixProvider* dpp,
                                  const std::string& string_to_sign,
                                  const std::string_view& signature,
                                  const signature_factory_t& signature_factory,
-                                 bool ignore_signature,
+                                 bool ignore_signature,                   
+                                 const req_state* s,
                                  optional_yield y) const
     -> access_token_result
 {
@@ -630,7 +638,7 @@ auto EC2Engine::get_access_token(const DoutPrefixProvider* dpp,
   if (token) {
     /* Fetch secret from keystone for the access_key_id */
     std::tie(secret, failure_reason) =
-        get_secret_from_keystone(dpp, token->get_user_id(), access_key_id, y);
+        get_secret_from_keystone(dpp, token->get_user_id(), access_key_id, s, y);
 
     if (secret) {
       /* Add token, secret pair to cache, and set timeout */
@@ -714,7 +722,7 @@ rgw::auth::Engine::result_t EC2Engine::authenticate(
 
   auto [t, secret_key, failure_reason] =
     get_access_token(dpp, access_key_id, string_to_sign,
-                     signature, signature_factory, ignore_signature, y);
+                     signature, signature_factory, ignore_signature, s, y);
   if (! t) {
     if (failure_reason == -ERR_SIGNATURE_NO_MATCH) {
       // we looked up a secret but it didn't generate the same signature as

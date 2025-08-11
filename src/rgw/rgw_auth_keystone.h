@@ -165,6 +165,7 @@ class EC2Engine : public rgw::auth::s3::AWSEngine {
                    const std::string_view& signature,
 		   const signature_factory_t& signature_factory,
                    bool ignore_signature,
+                   const req_state* s,
                    optional_yield y) const;
   result_t authenticate(const DoutPrefixProvider* dpp,
                         const std::string_view& access_key_id,
@@ -178,6 +179,7 @@ class EC2Engine : public rgw::auth::s3::AWSEngine {
   auto get_secret_from_keystone(const DoutPrefixProvider* dpp,
                                 const std::string& user_id,
                                 const std::string_view& access_key_id,
+                                const req_state* s,
                                 optional_yield y) const
       -> std::pair<boost::optional<std::string>, int>;
 public:
