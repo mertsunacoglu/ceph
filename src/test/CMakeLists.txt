@@ -1043,3 +1043,23 @@ add_ceph_unittest(unittest_ceph_assert)
 target_link_libraries(unittest_ceph_assert ceph-common global)
 endif()
 
+
+find_package(benchmark QUIET)
+if (benchmark_FOUND)
+  add_executable(bench_rgw_lua
+  bench_rgw_lua.cc
+  )
+
+
+  target_link_libraries(bench_rgw_lua rgw librados ceph-common benchmark::benchmark
+  ${UNITTEST_LIBS}
+  ${EXTRALIBS}
+  ${LUA_LIBRARIES}
+  ${ALLOC_LIBS}
+)
+target_include_directories(bench_rgw_lua
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw"
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw/driver/rados")
+else()
+  message(STATUS "Google Benchmark not found. Skipping micro benchmark tests")
+endif()
