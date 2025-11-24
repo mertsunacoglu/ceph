@@ -9,12 +9,22 @@
 #include "rgw_sal_rados.h"
 #include <benchmark/benchmark.h>
 #include <gtest/gtest.h>
+#include <sys/resource.h> // Needed for getrusage
 
 using namespace std;
 using namespace rgw;
 using boost::container::flat_set;
 using rgw::auth::Identity;
 using rgw::auth::Principal;
+
+// --- Helper to get Memory Usage ---
+long GetMaxRSS() {
+  struct rusage usage;
+  if (getrusage(RUSAGE_SELF, &usage) == 0) {
+    return usage.ru_maxrss; // Returns value in Kilobytes on Linux
+  }
+  return 0;
+}
 
 class FakeIdentity : public Identity {
 public:
@@ -250,10 +260,20 @@ void BM_RGWLua_Metadata(benchmark::State &state) {
   )";
   static volatile int rc;
   DEFINE_REQ_STATE;
-  s.info.x_meta_map["hello"] = "world";
-  s.info.x_meta_map["foo"] = "bar";
-  s.info.x_meta_map["ka"] = "boom";
+  
+  // Use meta_map_t (flat_map) to match s.info.x_meta_map
+  meta_map_t orig_map;
+  orig_map["hello"] = "world";
+  orig_map["foo"] = "bar";
+  orig_map["ka"] = "boom";
+  
+  s.info.x_meta_map = orig_map;
+
   for (auto _ : state) {
+    state.PauseTiming();       
+    s.info.x_meta_map = orig_map; // RESET
+    state.ResumeTiming();      
+
     rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script);
   }
 }
@@ -289,18 +309,9 @@ void BM_RGWLua_WriteMetadata(benchmark::State &state) {
 void BM_RGWLua_Acl(benchmark::State &state) {
   const std::string script = R"(
     function print_grant(k, g)
---      print("Grant Key: " .. tostring(k))
---      print("Grant Type: " .. g.Type)
-      if (g.GroupType) then
- --       print("Grant Group Type: " .. g.GroupType)
-      end
-      if (g.Referer) then
- --       print("Grant Referer: " .. g.Referer)
-      end
-      if (g.User) then
-  --      print("Grant User.Tenant: " .. g.User.Tenant)
-   --     print("Grant User.Id: " .. g.User.Id)
-      end
+      if (g.GroupType) then end
+      if (g.Referer) then end
+      if (g.User) then end
     end
 
     assert(Request.UserAcl.Owner.DisplayName == "jack black", Request.UserAcl.Owner.DisplayName)
@@ -403,12 +414,84 @@ void BM_RGWLua_Hello_NewState(benchmark::State &state) {
   }
 }
 
-BENCHMARK(BM_RGWLua_Hello);
-BENCHMARK(BM_RGWLua_Hello_NewState);
-BENCHMARK(BM_RGWLua_Metadata);
-BENCHMARK(BM_RGWLua_WriteMetadata);
-BENCHMARK(BM_RGWLua_Acl);
-BENCHMARK(BM_RGWLua_NestedLoop);
+// --- MODIFIED: Measure Memory Consumption ---
+void BM_RGWLua_WriteLock_Block(benchmark::State &state) {
+  const std::string script = R"(
+    local ADMIN_USER_ID = "adminid"
+    local write_methods = { PUT=true, POST=true, DELETE=true, COPY=true }
+    local user_id = "anonymous" 
+    local is_privileged_user = false
+
+    if Request and Request.User and Request.User.Id then
+      user_id = Request.User.Id
+    end
+
+    if user_id == ADMIN_USER_ID then is_privileged_user = true end
+
+    local method = nil
+    if Request and Request.HTTP and Request.HTTP.Method then
+      method = Request.HTTP.Method
+    end
+
+    if method and write_methods[method] then
+      if is_privileged_user then return 0 end
+
+      local header_key = "x-amz-meta-write-restricted"
+      local header_value = nil
+      if Request.HTTP.Metadata and Request.HTTP.Metadata[header_key] then
+         header_value = Request.HTTP.Metadata[header_key]
+      end
+
+      if header_value ~= nil then
+        return RGW_ABORT_REQUEST -- Block
+      end
+
+      local bucket_metadata = nil
+      if Request.Bucket and Request.Bucket.Metadata then
+        bucket_metadata = Request.Bucket.Metadata
+      end
+
+      if bucket_metadata then
+        local write_restricted = bucket_metadata["write-restricted"]
+        if write_restricted == "true" then
+          return RGW_ABORT_REQUEST -- Block
+        end
+      end
+      return 0 
+    end
+    return 0
+  )";
+
+  static volatile int rc;
+  DEFINE_REQ_STATE;
+  
+  s.info.method = "PUT";
+  std::unique_ptr<rgw::sal::User> u = std::make_unique<TestUser>();
+  u->get_info().user_id = rgw_user("testid");
+  s.set_user(u); 
+  s.info.x_meta_map["x-amz-meta-write-restricted"] = "true";
+
+  // Memory Tracking
+  long start_rss = GetMaxRSS();
+
+  for (auto _ : state) {
+    rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script);
+  }
+
+  long end_rss = GetMaxRSS();
+  // Note: This delta might be small or zero if Lua reuses memory efficiently/internally
+  state.counters["Memory (KB)"] = (double)(end_rss - start_rss);
+  state.counters["End RSS (KB)"] = (double)end_rss;
+}
+
+// Note: ->Unit(benchmark::kMillisecond) added here
+BENCHMARK(BM_RGWLua_Hello)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RGWLua_Hello_NewState)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RGWLua_Metadata)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RGWLua_WriteMetadata)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RGWLua_Acl)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RGWLua_NestedLoop)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RGWLua_WriteLock_Block)->Unit(benchmark::kMillisecond);
 
 int main(int argc, char **argv) {
   auto args = argv_to_vec(argc, argv);
