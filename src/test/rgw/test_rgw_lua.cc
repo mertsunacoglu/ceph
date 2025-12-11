@@ -1671,6 +1671,94 @@ TEST(TestRGWLua, NestedLoop)
   s.info.x_meta_map["44"] = "dd";
 
   const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script);
+  ASSERT_EQ(rc, 0);b9240452ddff
+}
+
+
+TEST(TestRGWLua, PreRequestReadUserId)
+{
+  const std::string script = R"(
+    assert(Request.User)
+    assert(Request.User.Id == "test-user-id")
+
+    local uid = Request.User.Id
+    if uid ~= "test-user-id" then
+      error("User ID mismatch")
+    end
+  )";
+
+  DEFINE_REQ_STATE;
+  s.user.reset(new sal::RadosUser(nullptr, rgw_user("test-tenant", "test-user-id")));
+  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script);
   ASSERT_EQ(rc, 0);
 }
 
+TEST(TestRGWLua, BucketMetadata)
+{
+  const std::string script = R"(
+    assert(Request.Bucket.Metadata, "Request.Bucket.Metadata table is missing!")
+    local lock = Request.Bucket.Metadata["user.writelock"]
+    RGWDebugLog("Read metadata 'user.writelock': " .. tostring(lock))
+    
+    assert(lock == "true", "Expected 'true' but got " .. tostring(lock))
+
+    local missing = Request.Bucket.Metadata["user.doesnotexist"]
+    assert(missing == nil, "Expected nil for missing key")
+  )";
+
+  DEFINE_REQ_STATE;
+
+  // Setup the Bucket (Required so Request.Bucket isn't nil)
+  RGWBucketInfo info;
+  info.bucket.name = "metadata-test-bucket";
+  s.bucket.reset(new sal::RadosBucket(nullptr, info));
+
+  // Setup the Attributes (The data source for your new binding)
+  // Note: Ceph stores these as bufferlists in a map
+  bufferlist bl;
+  bl.append("true");
+  s.bucket_attrs["user.writelock"] = bl;
+
+  // Execute
+  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script);
+  
+  // Assert Success
+  ASSERT_EQ(rc, 0);
+}
+
+TEST(TestRGWLua, BucketWriteLockEnforcement)
+{
+  const std::string script = R"(
+    if Request.Bucket.Metadata["user.writelock"] == "true" then
+        
+        local method = Request.HTTP.Method
+                
+        if method == "PUT" or method == "DELETE" or method == "POST" then
+            
+            Request.Response.HTTPStatusCode = 403
+            Request.Response.Message = "Write access is locked for this bucket"
+            return
+        end
+    end
+  )";
+
+  DEFINE_REQ_STATE;
+
+  RGWBucketInfo info;
+  info.bucket.name = "protected-bucket";
+  s.bucket.reset(new sal::RadosBucket(nullptr, info));
+
+  // Set the Metadata Lock
+  bufferlist bl;
+  bl.append("true");
+  s.bucket_attrs["user.writelock"] = bl;
+
+  // Set the Method (in the mock request)
+  s.info.method = "PUT";
+
+  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script);
+
+  ASSERT_EQ(rc, 0);
+  ASSERT_EQ(s.err.http_ret, 403);
+  ASSERT_EQ(s.err.message, "Write access is locked for this bucket");
+}
