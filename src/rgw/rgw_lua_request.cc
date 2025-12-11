@@ -272,6 +272,27 @@ struct OwnerMetaTable : public EmptyMetaTable {
   }
 };
 
+struct BucketMetadataTable : public EmptyMetaTable {
+  static int IndexClosure(lua_State* L) {
+    auto attrs = reinterpret_cast<std::map<std::string, bufferlist>*>(
+        lua_touserdata(L, lua_upvalueindex(SECOND_UPVAL)));
+
+    const char* key = luaL_checkstring(L, 2);
+
+    if (attrs) {
+      auto it = attrs->find(key);
+      if (it != attrs->end()) {
+        std::string val = it->second.to_str();
+        pushstring(L, val);
+        return ONE_RETURNVAL;
+      }
+    }
+    
+    lua_pushnil(L);
+    return ONE_RETURNVAL;
+  }
+};
+
 struct BucketMetaTable : public EmptyMetaTable {
   static int IndexClosure(lua_State* L) {
     const auto name = table_name_upvalue(L);
@@ -300,7 +321,9 @@ struct BucketMetaTable : public EmptyMetaTable {
       pushtime(L, bucket->get_creation_time());
     } else if (strcasecmp(index, "MTime") == 0) {
       pushtime(L, bucket->get_modification_time());
-    } else if (strcasecmp(index, "Quota") == 0) {
+    } else if (strcasecmp(index, "Metadata") == 0) {
+      create_metatable<BucketMetadataTable>(L, name, index, false, &(s->bucket_attrs));
+    }else if (strcasecmp(index, "Quota") == 0) {
       create_metatable<QuotaMetaTable>(L, name, index, false, &(bucket->get_info().quota));
     } else if (strcasecmp(index, "PlacementRule") == 0) {
       create_metatable<PlacementRuleMetaTable>(L, name, index, false, &(bucket->get_info().placement_rule));
