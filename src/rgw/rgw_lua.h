@@ -44,6 +44,9 @@ int read_script(const DoutPrefixProvider *dpp, rgw::sal::LuaManager* manager, co
 // delete the stored lua script from a context
 int delete_script(const DoutPrefixProvider *dpp, rgw::sal::LuaManager* manager, const std::string& tenant, optional_yield y, context ctx);
 
+int test_script(const DoutPrefixProvider *dpp, rgw::sal::Driver* driver,
+                optional_yield y, context ctx, const std::string& script,
+                const std::string& input_json, std::string& output);
 using packages_t = std::set<std::string>;
 
 #ifdef WITH_RADOSGW_LUA_PACKAGES

@@ -923,6 +923,7 @@ enum class OPT {
   PUBSUB_TOPIC_STATS,
   PUBSUB_TOPIC_DUMP,
   SCRIPT_PUT,
+  SCRIPT_TEST,
   SCRIPT_GET,
   SCRIPT_RM,
   SCRIPT_PACKAGE_ADD,
@@ -1191,6 +1192,7 @@ static SimpleCmd::Commands all_cmds = {
   { "topic stats", OPT::PUBSUB_TOPIC_STATS },
   { "topic dump", OPT::PUBSUB_TOPIC_DUMP },
   { "script put", OPT::SCRIPT_PUT },
+  { "script test", OPT::SCRIPT_TEST },
   { "script get", OPT::SCRIPT_GET },
   { "script rm", OPT::SCRIPT_RM },
   { "script-package add", OPT::SCRIPT_PACKAGE_ADD },
@@ -3867,6 +3869,8 @@ int main(int argc, const char **argv)
   std::optional<std::string> restore_status_filter;
   int show_restore_stats = false;
 
+  std::string input_data_file;
+
   init_realm_param(cct.get(), realm_id, opt_realm_id, "rgw_realm_id");
   init_realm_param(cct.get(), zonegroup_id, opt_zonegroup_id, "rgw_zonegroup_id");
   init_realm_param(cct.get(), zone_id, opt_zone_id, "rgw_zone_id");
@@ -4210,6 +4214,8 @@ int main(int argc, const char **argv)
       caps = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--infile", (char*)NULL)) {
       infile = val;
+    }else if (ceph_argparse_witharg(args, i, &val, "--input-data", (char*)NULL)) { 
+      input_data_file = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--metadata-key", (char*)NULL)) {
       metadata_key = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--marker", (char*)NULL)) {
@@ -4757,6 +4763,7 @@ int main(int argc, const char **argv)
                           && opt_cmd != OPT::PUBSUB_TOPIC_STATS
                           && opt_cmd != OPT::PUBSUB_TOPIC_DUMP
 			  && opt_cmd != OPT::SCRIPT_PUT
+			  && opt_cmd != OPT::SCRIPT_TEST
 			  && opt_cmd != OPT::SCRIPT_GET
 			  && opt_cmd != OPT::SCRIPT_RM
                           && opt_cmd != OPT::ACCOUNT_CREATE
@@ -12210,6 +12217,57 @@ next:
     if (rc < 0) {
       cerr << "ERROR: failed to put script. error: " << rc << std::endl;
       return -rc;
+    }
+  }
+
+  if (opt_cmd == OPT::SCRIPT_TEST) {
+    if (!str_script_ctx) {
+      cerr << "ERROR: context was not provided (via --context)" << std::endl;
+      return EINVAL;
+    }
+    if (infile.empty()) {
+      cerr << "ERROR: infile (script) was not provided (via --infile)" << std::endl;
+      return EINVAL;
+    }
+
+    bufferlist script_bl;
+    auto rc = read_input(infile, script_bl);
+    if (rc < 0) {
+      cerr << "ERROR: failed to read script: '" << infile << "'. error: " << rc << std::endl;
+      return -rc;
+    }
+    const std::string script = script_bl.to_str();
+    std::string input_data;
+    if (!input_data_file.empty()) {
+      bufferlist input_bl;
+      rc = read_input(input_data_file, input_bl);
+      if (rc < 0) {
+        cerr << "ERROR: failed to read input data file: '" << input_data_file << "'. error: " << rc << std::endl;
+        return -rc;
+      }
+      input_data = input_bl.to_str();
+    }
+
+    std::string err_msg;
+    const rgw::lua::context script_ctx = rgw::lua::to_context(*str_script_ctx);
+    if (script_ctx == rgw::lua::context::none) {
+      cerr << "ERROR: invalid script context: " << *str_script_ctx << ". must be one of: " << LUA_CONTEXT_LIST << std::endl;
+      return EINVAL;
+    }
+
+    std::string output_result;
+    rc = rgw::lua::test_script(dpp(), driver, null_yield, script_ctx, script, input_data, output_result);
+    
+    if (rc < 0) {
+      cerr << "Test Execution Failed (rc=" << rc << "):" << std::endl;
+      cerr << output_result << std::endl; 
+      return -rc;
+    }
+
+    std::cout << "Script executed successfully." << std::endl;
+    if (!output_result.empty()) {
+        std::cout << "Output:" << std::endl;
+        std::cout << output_result << std::endl;
     }
   }
 
