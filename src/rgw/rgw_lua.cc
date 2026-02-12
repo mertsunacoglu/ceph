@@ -15,6 +15,9 @@
 #include <boost/process/v1/pipe.hpp>
 #include <boost/process/v1/search_path.hpp>
 #include <boost/process/v1/start_dir.hpp>
+#include "common/ceph_json.h"
+#include "rgw_lua_utils.h"
+#include <iostream>
 #endif
 
 #define dout_subsys ceph_subsys_rgw
@@ -98,6 +101,108 @@ int write_script(const DoutPrefixProvider *dpp, sal::LuaManager* manager, const 
 int delete_script(const DoutPrefixProvider *dpp, sal::LuaManager* manager, const std::string& tenant, optional_yield y, context ctx)
 {
   return manager ? manager->del_script(dpp, y, script_oid(ctx, tenant)) : -ENOENT;
+}
+
+// Recursive function to push JSON data onto the Lua stack
+void push_json_to_lua(lua_State* L, const JSONFormattable& data) {
+  if (data.type == JSONFormattable::FMT_TYPE_STRING) {
+    lua_pushstring(L, data.val.c_str());
+  } else if (data.type == JSONFormattable::FMT_TYPE_INT) {
+    lua_pushinteger(L, std::stoi(data.val));
+  } else if (data.type == JSONFormattable::FMT_TYPE_BOOL) {
+    lua_pushboolean(L, (data.val == "true"));
+  } else if (data.type == JSONFormattable::FMT_TYPE_OBJ) {
+    lua_newtable(L);
+    for (auto& pair : data.obj) {
+      lua_pushstring(L, pair.first.c_str()); 
+      push_json_to_lua(L, pair.second);      
+      lua_settable(L, -3);
+    }
+  } else if (data.type == JSONFormattable::FMT_TYPE_ARRAY) {
+    lua_newtable(L);
+    int index = 1;
+    for (auto& item : data.arr) {
+      lua_pushinteger(L, index++); 
+      push_json_to_lua(L, item); 
+      lua_settable(L, -3);
+    }
+  } else {
+    lua_pushnil(L);
+  }
+}
+
+int mock_rgw_log(lua_State* L) {
+  int top = lua_gettop(L);
+  if (top > 0) {
+    const char* msg = lua_tostring(L, 1);
+    if (msg) {
+      std::cout << "[LUA LOG]: " << msg << std::endl;
+    }
+  }
+  return 0;
+}
+
+int test_script(const DoutPrefixProvider *dpp, rgw::sal::Driver* driver,
+                optional_yield y, context ctx, const std::string& script,
+                const std::string& input_json, std::string& output) {
+  
+  lua_State* L = luaL_newstate();
+  if (!L) {
+    return -ENOMEM;
+  }
+  luaL_openlibs(L);
+
+  lua_newtable(L);
+  
+  if (!input_json.empty()) {
+    JSONParser parser;
+    if (!parser.parse(input_json.c_str(), input_json.length())) {
+      lua_close(L);
+      return -EINVAL; 
+    }
+    
+    try {
+        JSONFormattable formattable;
+        decode_json_obj(formattable, &parser);
+        lua_pop(L, 1); 
+        push_json_to_lua(L, formattable);
+    } catch (const JSONDecoder::err& e) {
+        lua_close(L);
+        return -EINVAL;
+    }
+  }
+
+  lua_setglobal(L, "RGW");
+
+  lua_getglobal(L, "RGW");
+  
+  lua_pushstring(L, "log");
+  lua_pushcfunction(L, mock_rgw_log);
+  lua_settable(L, -3);
+
+  
+  lua_pop(L, 1);
+
+  int ret = luaL_loadstring(L, script.c_str());
+  if (ret != LUA_OK) {
+    output = lua_tostring(L, -1);
+    lua_close(L);
+    return -EINVAL;
+  }
+
+  ret = lua_pcall(L, 0, 0, 0);
+  if (ret != LUA_OK) {
+    output = lua_tostring(L, -1);
+    lua_close(L);
+    return -EIO;
+  }
+
+  if (!input_json.empty()) {
+    lua_getglobal(L, "RGW");
+  }
+
+  lua_close(L);
+  return 0;
 }
 
 #ifdef WITH_RADOSGW_LUA_PACKAGES
