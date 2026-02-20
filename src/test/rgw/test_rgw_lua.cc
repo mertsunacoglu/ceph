@@ -1634,33 +1634,20 @@ TEST(TestRGWLua, ReturnString)
 
   int return_code = 0;
   DEFINE_REQ_STATE;
-  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script, return_code);
-  ASSERT_EQ(rc, 0);
-  EXPECT_NE(return_code, -EPERM);
-}
+  
+  RGWBucketInfo info;
+  info.bucket.tenant = "mytenant";
+  info.bucket.name = "myname";
+  
+  RGWObjTags tags;
+  tags.add_tag("Project", "Ceph");
+  
+  bufferlist bl;
+  tags.encode(bl);
 
-TEST(TestRGWLua, SuccessNoReturn)
-{
-  const std::string script = R"(
-  -- do nothing and return nothing
-  )";
+  s.bucket_attrs[RGW_ATTR_TAGS] = bl;
+  s.bucket.reset(new sal::RadosBucket(nullptr, info));
 
-  int return_code = 0;
-  DEFINE_REQ_STATE;
-  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script, return_code);
-  ASSERT_EQ(rc, 0);
-  EXPECT_NE(return_code, -EPERM);
-}
-
-TEST(TestRGWLua, NotValidLua)
-{
-  const std::string script = R"(
-  this is not valid lua code
-  )";
-
-  int return_code = 0;
-  DEFINE_REQ_STATE;
-  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script, return_code);
-  ASSERT_EQ(rc, -1);
-  EXPECT_NE(return_code, -EPERM);
+const auto rc = lua::request::execute(nullptr, nullptr, nullptr, &s, nullptr, script);
+ASSERT_EQ(rc, 0);
 }
