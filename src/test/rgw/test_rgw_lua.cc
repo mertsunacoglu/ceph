@@ -1621,7 +1621,7 @@ TEST(TestRGWLua, ReturnError)
   )";
   int return_code = 0;
   DEFINE_REQ_STATE;
-  const auto rc = lua::request::execute(nullptr, nullptr, &s, nullptr, script, return_code);
+  const auto rc = lua::request::execute(nullptr, nullptr, nullptr, &s, nullptr, script, return_code);
   EXPECT_EQ(rc, 0);
   EXPECT_EQ(return_code, -EPERM);
 }
