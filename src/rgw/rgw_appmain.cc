@@ -479,12 +479,13 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
       fe = new RGWLoadGenFrontend(env, config);
     }
     else if (framework == "beast") {
-      fe = new RGWAsioFrontend(env, config, *sched_ctx, context_pool_holder.get());
+      need_context_pool();
+      fe = new RGWAsioFrontend(env, config, *sched_ctx, *context_pool);
       if (g_conf()->rgw_crypt_s3_kms_cache_enabled) {
         env.kms_cache->initialize_ttl_reaper(
-            g_conf()->rgw_beast_enable_async
-            ? std::optional(context_pool_holder.get().get_executor())
-                : nullopt);
+         g_conf()->rgw_beast_enable_async
+         ? std::optional(context_pool->get_executor())
+         : std::nullopt);
       }
     }
     else if (framework == "rgw-nfs") {
@@ -635,13 +636,12 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
     }
   }
 
+  env.kms_cache.reset();
+
   for (auto& fe : fes) {
     fe->stop();
   }
 
-  if (env.kms_cache) {
-    env.kms_cache->stop_ttl_reaper();
-  }
   ldh.reset(nullptr); // deletes ldap helper if it was created
   rgw_log_usage_finalize();
 
